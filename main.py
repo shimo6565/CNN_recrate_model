@@ -2,6 +2,8 @@ from tensorflow.keras import layers
 from tensorflow.keras import models
 import numpy as np
 
+
+##以下は Fukuiらの論文に掲載されているコードを引用している (ただし、addedは私が追加した行であることを示すためのコメントである)
 def build_model():
     model = models.Sequential() ##added
     model.add(layers.Conv2D(filters = 16, kernel_size = (2, 1), strides = (1,1),padding = 'same', activation = 'relu', input_shape = (40, 14, 3)))
@@ -15,8 +17,10 @@ def build_model():
     model.compile(optimizer = 'rmsprop', loss = 'categorical_crossentropy',metrics = ['acc'])
     return model
 
-X = np.load('X.npy')
-y = np.load('y.npy')
+X = np.load('X.npy') #added
+y = np.load('y.npy') #added
 
 model = build_model()
 model.fit(X, y, epochs = 100, batch_size = 1, verbose = 0)
+
+#######################################################
