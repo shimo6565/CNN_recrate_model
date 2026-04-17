@@ -6,9 +6,8 @@ MSS測定データをCNNで解析するためのコードです。
 ## 概要
 
 本リポジトリは、人工嗅覚（Artificial Olfaction）におけるMSS（Membrane-type Surface stress Sensor）測定データを対象に、
-CNN（Convolutional Neural Network）で分類を行うための最小実装です。
+CNN（Convolutional Neural Network）で分類を行うための再現実装です。
 
-現状では、論文中のネットワーク構成を参考にしたモデル定義コードを `main` に含んでいます。
 
 ## 著作権・ライセンス表示（CC BY 4.0）
 
