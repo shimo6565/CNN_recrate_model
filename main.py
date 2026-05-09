@@ -32,7 +32,7 @@ CATEGORY_MAP = {
     # Aromatic hydrocarbons (3)
     '1,2-Xylene': 3, 'Benzene': 3, 'Ethylbenzene': 3, 'Mesitylene': 3, 'Toluene': 3,
     # Esters (4)
-    'Butyl acetate': 4, 'Ethyl acetate': 4, 'Ethyl butylate': 4,
+    'Butyl acetate': 4, 'Ethyl acetate': 4, 'Ethyl butyrate': 4,
     'Ethyl propionate': 4, 'Methyl acetate': 4, 'Methyl propionate': 4,
     # Ethers (5)
     '1,4-Dioxiane': 5, 'Diethyl ether': 5, 'Dihexyl ether': 5,
