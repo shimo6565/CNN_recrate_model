@@ -4,6 +4,16 @@ import pandas as pd
 from tensorflow.keras import layers, models
 from tensorflow.keras.utils import to_categorical
 from sklearn.metrics import accuracy_score, confusion_matrix
+import tensorflow as tf
+
+# GPUメモリの動的確保（メモリを使いすぎないように設定）
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        print(e)
 
 DATA_DIR = 'MSS_sensor_data'
 NUM_CLASSES = 9
