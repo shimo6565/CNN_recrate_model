@@ -42,7 +42,7 @@ CATEGORY_MAP = {
     # Aromatic hydrocarbons (3)
     '1,2-Xylene': 3, 'Benzene': 3, 'Ethylbenzene': 3, 'Mesitylene': 3, 'Toluene': 3,
     # Esters (4)
-    'Butyl acetate': 4, 'Ethyl acetate': 4, 'Ethyl butyrate': 4,
+    'Butyl acetate': 4, 'Ethyl acetate': 4, 'Ethyl butylate': 4,
     'Ethyl propionate': 4, 'Methyl acetate': 4, 'Methyl propionate': 4,
     # Ethers (5)
     '1,4-Dioxiane': 5, 'Diethyl ether': 5, 'Dihexyl ether': 5,
@@ -96,23 +96,31 @@ def load_dataset(data_dir, category_map):
 
 
 def build_model(input_shape=(40, 14, 3), num_classes=9):
-    model = models.Sequential()
-    model.add(layers.Conv2D(16, (2, 1), padding='same', activation='relu',
-                            input_shape=input_shape))
-    model.add(layers.Conv2D(16, (2, 1), padding='same', activation='relu'))
-    model.add(layers.Dropout(0.2))
-    model.add(layers.Conv2D(16, (2, 1), padding='same', activation='relu',
-                            name='final_conv_layer'))
-    model.add(layers.MaxPooling2D((2, 1), padding='same'))
-    model.add(layers.Flatten())
-    model.add(layers.Dense(1024, activation='relu'))
-    model.add(layers.Dense(num_classes, activation='softmax'))
+    # Functional API: Score-CAM が model.input / model.get_layer() を参照できるよう
+    # Sequential ではなく Functional API で構築する
+    inputs = layers.Input(shape=input_shape)
+    x = layers.Conv2D(16, (2, 1), padding='same', activation='relu')(inputs)
+    x = layers.Conv2D(16, (2, 1), padding='same', activation='relu')(x)
+    x = layers.Dropout(0.2)(x)
+    x = layers.Conv2D(16, (2, 1), padding='same', activation='relu',
+                      name='final_conv_layer')(x)
+    x = layers.MaxPooling2D((2, 1), padding='same')(x)
+    x = layers.Flatten()(x)
+    x = layers.Dense(1024, activation='relu')(x)
+    outputs = layers.Dense(num_classes, activation='softmax')(x)
+    model = models.Model(inputs=inputs, outputs=outputs)
     model.compile(optimizer='rmsprop', loss='categorical_crossentropy',
                   metrics=['accuracy'])
     return model
 
 
-def loocv(X, y, solvents, num_classes=9, epochs=100):
+def loocv(X, y, solvents, num_classes=9, epochs=100,
+          save_dir='saved_models'):
+    """
+    LOOCV を実行し、各イテレーションの学習済みモデルを save_dir に保存する。
+    保存先: saved_models/model_000.keras … model_093.keras
+    """
+    os.makedirs(save_dir, exist_ok=True)
     n = len(X)
     true_labels, pred_labels = [], []
 
@@ -123,6 +131,9 @@ def loocv(X, y, solvents, num_classes=9, epochs=100):
 
         model = build_model(X.shape[1:], num_classes)
         model.fit(X_train, y_train, epochs=epochs, batch_size=1, verbose=0)
+
+        # モデルを保存（後から Score-CAM を実行できるよう）
+        model.save(os.path.join(save_dir, f'model_{i:03d}.keras'))
 
         pred = int(np.argmax(model.predict(X_test, verbose=0)[0]))
         true_labels.append(int(y[i]))
@@ -137,24 +148,104 @@ def loocv(X, y, solvents, num_classes=9, epochs=100):
     return acc, cm, true_labels, pred_labels
 
 
+def run_score_cam(X, y, solvents, save_dir='saved_models'):
+    """
+    保存済みモデルを読み込んで Score-CAM を計算する（GPU 不要）。
+    loocv() で saved_models/ を生成済みであることが前提。
+
+    Returns
+    -------
+    raw_maps    : ndarray, shape (94, 40, 14)
+        全分子の生の重要度マップ（時間40点 × チャネル14本）
+    pred_labels : ndarray, shape (94,)
+    """
+    from score_cam import compute_score_cam
+    import tensorflow as tf
+
+    n = len(X)
+    # raw_maps: (94, 40, 14) — 生の重要度マップ（Figure 6 のカテゴリ平均に使用）
+    raw_maps    = np.zeros((n, 40, 14), dtype=np.float32)
+    pred_labels = np.full(n, -1, dtype=int)
+
+    for i in range(n):
+        model_path = os.path.join(save_dir, f'model_{i:03d}.keras')
+        if not os.path.exists(model_path):
+            print(f'[{i+1:2d}] スキップ（未保存: {model_path}）')
+            continue
+
+        model = tf.keras.models.load_model(model_path)
+        pred  = int(np.argmax(model.predict(X[i:i+1], verbose=0)[0]))
+        pred_labels[i] = pred
+
+        status = 'OK' if pred == y[i] else 'NG'
+        print(f'[{i+1:2d}/{n}] {solvents[i]:<35} {status}')
+
+        # 正解・不正解問わず全分子の Score-CAM を計算
+        imp_map, _ = compute_score_cam(model, X[i])  # (40, 14)
+        raw_maps[i] = imp_map
+
+    return raw_maps, pred_labels
+
+
 if __name__ == '__main__':
+    import sys
+    # 使い方:
+    #   python3 main.py          # train + scorecam を両方実行
+    #   python3 main.py train    # GPU環境でLOOCVを実行してモデルを保存
+    #   python3 main.py scorecam # 保存済みモデルでScore-CAMのみ実行（CPU可）
+    mode = sys.argv[1] if len(sys.argv) > 1 else 'all'
+    assert mode in ('train', 'scorecam', 'all'), \
+        f"mode は 'train' / 'scorecam' / 'all' のいずれかを指定してください"
+
     print('Loading dataset...')
     X, y, solvents = load_dataset(DATA_DIR, CATEGORY_MAP)
     print(f'  X shape: {X.shape}, y shape: {y.shape}')
 
-    build_model().summary()
+    # ── フェーズ1: LOOCV（学習 + モデル保存）────────────────────────────
+    if mode in ('train', 'all'):
+        build_model().summary()
+        print(f'\nRunning LOOCV (94 iterations × {EPOCHS} epochs) ...')
+        acc, cm, true_labels, pred_labels = loocv(
+            X, y, solvents, NUM_CLASSES, EPOCHS
+        )
 
-    print('\nRunning Leave-One-Out Cross-Validation (94 iterations × 100 epochs)...')
-    acc, cm, true_labels, pred_labels = loocv(X, y, solvents, NUM_CLASSES, EPOCHS)
+        print(f'\n=== Result ===')
+        print(f'Accuracy: {acc:.3f}')
+        print('\nConfusion matrix (rows=true, cols=pred):')
+        header = ''.join(f'{i:4d}' for i in range(NUM_CLASSES))
+        print(f'     {header}')
+        for i, row in enumerate(cm):
+            print(f'  {i}  ' + ''.join(f'{v:4d}' for v in row)
+                  + f'  {CATEGORY_LABELS[i]}')
 
-    print(f'\n=== Result ===')
-    print(f'Accuracy: {acc:.3f}')
-    print('\nConfusion matrix (rows=true, cols=pred):')
-    header = ''.join(f'{i:4d}' for i in range(NUM_CLASSES))
-    print(f'     {header}')
-    for i, row in enumerate(cm):
-        print(f'  {i}  ' + ''.join(f'{v:4d}' for v in row) + f'  {CATEGORY_LABELS[i]}')
+        np.save('loocv_true.npy', np.array(true_labels))
+        np.save('loocv_pred.npy', np.array(pred_labels))
+        print('\nSaved: loocv_true.npy, loocv_pred.npy')
+        print('Saved: saved_models/model_000.keras … model_093.keras')
 
-    np.save('loocv_true.npy', np.array(true_labels))
-    np.save('loocv_pred.npy', np.array(pred_labels))
-    print('\nSaved: loocv_true.npy, loocv_pred.npy')
+    # ── フェーズ2: Score-CAM（推論のみ・GPU不要）────────────────────────
+    if mode in ('scorecam', 'all'):
+        print('\nComputing Score-CAM from saved models ...')
+        raw_maps, pred_labels_cam = run_score_cam(X, y, solvents)
+
+        from score_cam import to_interval_importance, plot_all_maps, plot_average_maps
+        true_labels_cam = y
+
+        # importance_maps.npy: (94, 14, 4) — Figure 5 用・区間平均済み
+        importance_data = np.stack(
+            [to_interval_importance(raw_maps[i]) for i in range(len(raw_maps))]
+        )  # (94, 14, 4)
+        np.save('importance_maps.npy', importance_data)
+        print('Saved: importance_maps.npy  shape:', importance_data.shape)
+
+        # Figure 5 相当: 全94分子 × 4区間パネル
+        plot_all_maps(importance_data, true_labels_cam, pred_labels_cam,
+                      solvents, CATEGORY_LABELS)
+
+        # Figure 6 相当: カテゴリ平均（正解サンプルのみ）— 横軸は40点 (0~117s)
+        avg_maps = []
+        for cat in range(NUM_CLASSES):
+            mask = (true_labels_cam == cat) & (pred_labels_cam == cat)
+            avg_maps.append(raw_maps[mask].mean(axis=0)   # (40, 14)
+                            if mask.any() else None)
+        plot_average_maps(avg_maps, CATEGORY_LABELS)
